@@ -45,18 +45,19 @@ def gql(name, variables, token=None):
             time.sleep(30 if code == 429 else 2 ** attempt)
 
 def feed(name, variables, pages=3):
-    """Walk pages the way the site does (page N + beforeUpdateDate of first item of previous page)."""
+    """Walk result pages like the site does. Pages are 1-based (page 0 repeats page 1) and
+    consecutive pages can share a boundary item, so results are de-duplicated."""
     key = {"FetchAds": "posts", "Search": "search"}[name]
-    out, v = [], dict(variables, page=0)
-    for p in range(pages):
-        res = gql(name, v)[key]
+    out, seen = [], set()
+    for page in range(1, pages + 1):
+        res = gql(name, dict(variables, page=page))[key]
         time.sleep(1.5)
-        out += res["items"]
+        for item in res["items"]:
+            if item["id"] not in seen:
+                seen.add(item["id"])
+                out.append(item)
         if not res["pageInfo"]["hasNextPage"] or not res["items"]:
             break
-        v = dict(variables, page=p + 1)
-        if name == "FetchAds":  # feed pages are anchored on the previous page's first updateDate
-            v["beforeUpdateDate"] = res["items"][0]["updateDate"]
     return out
 
 if __name__ == "__main__":

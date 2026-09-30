@@ -1,6 +1,6 @@
 ---
 name: haraj-ad-analytics
-description: Check where a Haraj (haraj.com.sa) seller's ads rank in category feeds and keyword search, and read their paid view-campaign stats (the "عرض إحصائيات الإعلان" screen). Use when the user asks about Haraj ad ranking, visibility, views, impressions, campaigns (حملات المشاهدات), or why an ad isn't showing.
+description: Check where a Haraj (haraj.com.sa) seller's ads rank in category feeds and keyword search, detect ads Haraj is hiding, and read their paid view-campaign stats (the "عرض إحصائيات الإعلان" screen). Use when the user asks about Haraj ad ranking, visibility, views, impressions, campaigns (حملات المشاهدات), or why an ad isn't showing.
 ---
 
 # Haraj ad analytics
@@ -11,44 +11,63 @@ Haraj's website talks to a public GraphQL API at `https://graphql.haraj.com.sa/?
 ## 1. Rank check (anonymous, use a non-personal IP)
 
 ```bash
-python3 scripts/rank.py "<authorUsername>" "keyword 1" "keyword 2"
+cd scripts && python3 rank.py "<authorUsername>" "keyword 1" "keyword 2"
 ```
 
-Prints, for every ad of the seller: position in each of its category+city feeds, whether it is
-promoted, hours since last update, and its page-1 position for each keyword search.
-A cloud container / VPN IP is fine: these queries take no user or location input.
+For every ad of the seller and each of its categories (in the ad's city) it prints the actual feed
+position, where the ad *should* be given that feed's sort order, whether refresh works in that
+feed, and page 1-5 search positions per keyword. An ad that is "MISSING (should be ~#N)" in its
+feeds and absent from searches matching its own title is hidden by Haraj. Takes a few minutes
+(it sleeps between calls). A cloud container / VPN IP is fine: these queries take no user input.
 
-## 2. Campaign stats (needs the owner's login)
+## 2. Owner-only data (needs the owner's login)
 
-`GetPostViewsCampaignsByPostId` returns what "عرض إحصائيات الإعلان" shows: purchased vs achieved
-views, impressions (الظهور), points spent, targeted city/tags, running/completed. Anonymously it
-returns 401, so either:
-- read it on the ad page in the user's logged-in browser (عرض إحصائيات الإعلان button), or
-- call `gql("GetPostViewsCampaignsByPostId", {"postId": ID}, token=...)` with the user's access
-  token. Never ask the user to paste their token into chat; read it only from their own browser
-  session if they have given you access to it.
+All return 401 anonymously:
+- `GetPostViewsCampaignsByPostId(postId)`: campaign bought/achieved views, impressions (الظهور),
+  points, targeting, running/completed.
+- `GetPostDisabledReasons(postId)` -> `{reasonBody reasonCode}`: why an ad is hidden. The site shows
+  it to the owner as "عرضك غير مرئي للآخرين". Codes: `POST_NEEDS_TO_BE_UPDATED`,
+  `MUST_BUY_POST_VIEWS_CAMPAIGN`, `AUTHOR_IDENTITY_MUST_BE_CHECKED`, `MUST_HAVE_REGA_POST_LICENSE`,
+  `MUST_HAVE_TOURISM_RENTAL_LICENSE`, `AUCTION_SELLER_CONFIRMATION_REQUIRED`.
+- The per-ad stats modal (عرض إحصائيات الإعلان): views, impressions (الظهور), contact clicks,
+  calls, chats, comments, likes, shares. **Impressions = 0 means the ad is hidden.**
 
-Useful derived numbers: views/impressions = click-through rate; points/achieved views = cost per view.
-One phone-call click counts as several views (`costOfOneCallClickInViews`), so achieved views can
-exceed purchased.
+Read these on the ad page in the user's logged-in browser, or call `gql(..., token=...)` with their
+access token. Never ask the user to paste their password or token into chat.
 
-## How Haraj actually ranks (verified 2026-09-30)
+`doesPostMustBuyPostViewsCampaign(postId)` works anonymously.
 
-- **Category feeds** (`posts` / FetchAds): strictly newest `updateDate` first. Paging uses
-  `beforeUpdateDate`. Clicks, likes (upRank) and comments do not change the order. Paid campaign
-  ads (`promotedPosts`) are injected as a block for the targeted tag+city.
-- **Main "خدمات" feed**: in samples of 100+ ads, every item was `isPromoted=true`; unpaid service ads
-  only show in sub-category feeds and search.
-- **Keyword search** (`search`): text relevance, not freshness. Ads with all query words in the
-  **title** fill page 1; body text and freshness only matter when few titles match. Campaigns do
-  not boost search. Only ~20 results are shown (later pages repeat page 1).
-- **Near-duplicate ads** from one seller tend to be missing from search: keep one ad per service
-  and refresh it (Haraj's own guidance: "يرجى الاكتفاء بعرض واحد لكل سلعة ويمكنك تحديثه").
-- Official factors (from the site's own help text): freshness (تحديث العرض), ad completeness/description
-  (جودة العرض), and account ratings (تقييمات حسابك).
+Derived numbers: views/impressions = click-through rate; points/achieved views = cost per view.
+One phone-call click counts as several views (`costOfOneCallClickInViews`).
+
+## How Haraj actually ranks (verified 2026-09-30/10-01)
+
+- **Category feeds** (`posts` / FetchAds) sort differently per category. Detect it; don't assume:
+  - by **last update**, so refresh (تحديث) moves the ad to the top: e.g. خدمات الشراء من المواقع العالمية,
+    كل الحراج by city.
+  - by **original post date**, so refresh is ignored: e.g. خدمات تعقيب, مشاريع واستثمارات,
+    مستلزمات رياضية, حراج السيارات. There an ad sinks for good; only search keeps it findable.
+  - Clicks, likes and comments never change feed order. `upRank` on a post is the *seller's*
+    rating count, not likes.
+- **Top-level "خدمات" feed is paid-only**: every listed ad is `isPromoted`. An ad tagged only
+  `خدمات` (no sub-category) is invisible when browsing.
+- **Campaigns** (`promotedPosts`) are injected as a block at the top of the targeted tag+city
+  feed until the bought views run out. They do not boost search.
+- **Keyword search** (`search`): ads with all the query words in the **title** come first; when
+  every result matches, fresher ads rank higher. Account age, ratings, Nafath and paid commission
+  did not predict search position.
+- **Hidden ads**: near-duplicate ads from one seller get hidden from both feeds and search. Haraj
+  sends a `similar_ads` notice: "نرجو تحديث عرضك الموجود مسبقا بدلا من إضافة عرض جديد".
+  Keep one ad per service.
+- Official factors (site help text): freshness (تحديث العرض), completeness/description (جودة العرض),
+  account ratings (تقييمات حسابك). Campaign button needs: correct category, a price, enough
+  description, one store per business, under the promoted-ads cap.
 
 ## Gotchas
 
-- HTTP 388 = the GraphQL query is invalid (e.g. passing `beforeUpdateDate` to `search`). Not a rate limit.
+- Both feed and search pages are **1-based**; page 0 silently repeats page 1. `feed()` handles it.
+- HTTP 388 = invalid GraphQL query (e.g. passing `beforeUpdateDate` to `search`), not a rate limit.
 - Sleep ~1.5 s between calls; 429 means slow down.
-- Look up by `authorUsername` rather than a list of ids; multi-id lookups can drop items.
+- `authorUsername` is ignored when combined with `tag` in FetchAds, and is ignored by `search`.
+- Descriptions pasted with HTML entities show up to buyers as literal `&amp;bull;`. Check
+  `bodyTEXT` for `&amp;`.
