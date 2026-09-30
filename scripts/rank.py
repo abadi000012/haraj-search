@@ -27,7 +27,7 @@ def sort_key(items):
 def feed_report(ad, tag):
     items = feed("FetchAds", {"tag": tag, "city": ad["city"], "limit": 20}, pages=FEED_PAGES)
     organic = [x for x in items if not x["isPromoted"]]
-    if not organic:
+    if len(organic) < 0.1 * len(items):
         return f"{tag}: paid-only feed (only promoted ads are listed)"
     key = sort_key(items)
     ids = [x["id"] for x in items]
@@ -37,7 +37,7 @@ def feed_report(ad, tag):
     how = "refresh works" if key == "updateDate" else "sorted by post date, refresh ignored"
     if found:
         state = f"#{found}"
-    elif expected:
+    elif expected and expected <= len(items) - 20:  # well inside the scanned window
         state = f"MISSING (should be ~#{expected}) -> hidden"
     else:
         state = f"deeper than {len(items)} ads"
